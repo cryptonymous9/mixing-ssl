@@ -1,0 +1,4 @@
+train_dataset: "as"  # Required, override with your dataset
+val_dataset: ""
+num_workers: 10
+in_memory: true  # Required, specify if dataset fits in memory

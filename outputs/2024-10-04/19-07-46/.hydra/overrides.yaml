@@ -1,0 +1,3 @@
+- +pretrain=barlow
+- +pretrain.validation.resolutoin=10
+- +data.train_dataset=my_train_data.dat

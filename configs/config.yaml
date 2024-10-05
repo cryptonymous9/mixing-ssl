@@ -1,0 +1,3 @@
+defaults:
+  - dataloader: data
+  - pretrain: simclr  # This sets simclr as the default method
