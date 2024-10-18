@@ -15,7 +15,7 @@ from ffcv.fields import IntField, RGBImageField
 import argparse
 
 # python image_to_ffcv.py --data_dir="../in100/train/" --write_path="../data/in100-ffcv/train.beton" 
-# pythoh image_to_ffcv.py --data_dir="../in100/train/" --diffusion=True --diffusion_dir="" --write_path="../data/in-g8-ffcv/train.beton"
+# pythoh image_to_ffcv.py --data_dir="../in100/train/" --diffusion=True --synthetic_dir="" --write_path="../data/in-g8-ffcv/train.beton"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="../in100/train/", type=str)
@@ -28,11 +28,9 @@ parser.add_argument("--subset", default=-1, help="""No. of Images to convert (-1
 parser.add_argument("--num_workers", default=16, type=int)
 parser.add_argument("--chunk_size", default=400, type=int)
 parser.add_argument("--write_mode", choices=["raw", "smart", "jpg"], default='smart', type=str)
-parser.add_argument("--diffusion", type=bool, default=False)
-parser.add_argument("--diffusion_dir", default='../in100-g/train/', type=str)
+parser.add_argument("--synthetic_dir", default=None, type=str)
 
 args = parser.parse_args()
-
 
 
 class DualImageDataset(Dataset):
@@ -139,9 +137,9 @@ class ClassDataset(Dataset):
     
 
 def main(args):
-    if args.diffusion:
-        print(f"Data loading from '{args.data_dir}' & '{args.diffusion_dir}' directory")
-        dataset = DualImageDataset(root_dir1=args.data_dir, root_dir2=args.diffusion_dir)
+    if args.synthetic_dir:
+        print(f"Data loading from '{args.data_dir}' & '{args.synthetic_dir}' directory")
+        dataset = DualImageDataset(root_dir1=args.data_dir, root_dir2=args.synthetic_dir)
         print(f"Configuration: \n JPEG quality:{args.jpeg_quality}\t Resolution:{args.max_resolution}\t Mode:{args.write_mode}")
         if args.subset >0: dataset = Subset(dataset, range(args.subset))
 

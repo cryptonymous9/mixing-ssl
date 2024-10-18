@@ -14,7 +14,7 @@ model:
 training:
   eval_only: 0
   eval_freq: 100
-  batch_size: 512
+  batch_size: 32
   num_crops: 1
   optimizer: adamw  # Options: ['sgd', 'adamw', 'lars']
   momentum: 0.9
