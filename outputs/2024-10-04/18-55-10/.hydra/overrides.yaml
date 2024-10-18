@@ -1,2 +1,0 @@
-- +pretrain=barlow
-- pretrain.data.train_dataset=my_train_data.dat

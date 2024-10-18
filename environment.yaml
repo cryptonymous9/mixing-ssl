@@ -1,0 +1,19 @@
+name: torch-ffcv
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda==12.1
+  - cupy
+  - pkg-config
+  - libjpeg-turbo>=2.1.4
+  - opencv
+  - numba==0.56.2
+  - pip
+  - pip:
+      - tqdm
+      - ffcv

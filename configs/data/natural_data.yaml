@@ -1,0 +1,10 @@
+train_dataset: "/media/nidhin/4e99063f-a0b2-45a6-b3df-7acd881657a2/Github/data/in-g8_10per/train.beton"  # Required, override with your dataset
+val_dataset:   "/media/nidhin/4e99063f-a0b2-45a6-b3df-7acd881657a2/Github/data/in100-ffcv/val.beton"
+num_workers: 10
+in_memory: true  # Required, specify if dataset fits in memory
+
+resolution:
+  min_res: 64    # the minimum (starting) resolution
+  max_res: 224   # the maximum (starting) resolution
+  start_ramp: 10 # when to start interpolating resolution
+  end_ramp: 30   # when to stop interpolating resolution

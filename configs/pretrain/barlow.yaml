@@ -3,6 +3,7 @@ barlow:
 
 # Common configurations
 model:
+  name: barlow
   arch: resnet50
   remove_head: 0
   mlp: "2048-512"
@@ -32,7 +33,7 @@ training:
 
 validation:
   batch_size: 25
-  resolution: 224
+  resolution: 224  
 
 logging:
   folder: ""  # Required, specify log folder

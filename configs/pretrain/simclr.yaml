@@ -2,6 +2,7 @@ simclr:
   temperature: 0.5
   
 model:
+  name: simclr
   arch: resnet50
   remove_head: 0
   mlp: "2048-512"
@@ -29,17 +30,11 @@ training:
   train_probes_only: 0
   mixup: 0.0
 
-data:
-  train_dataset: "abc"  # Required, override with your dataset
-  val_dataset: ""
-  num_workers: 10
-  in_memory: true  # Required, specify if dataset fits in memory
-
 validation:
   batch_size: 25
   resolution: 224
 
 logging:
-  folder: ""  # Required, specify log folder
+  folder: "logs/test1/"  # Required, specify log folder
   log_level: 2
   checkpoint_freq: 20

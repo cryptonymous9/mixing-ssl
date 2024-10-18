@@ -1,3 +1,14 @@
 defaults:
-  - dataloader: data
+  - data: natural_data
   - pretrain: simclr  # This sets simclr as the default method
+
+distributed:
+  use_submitit: 0
+  world_size: 1
+  ngpus: 4
+  nodes: 1
+  comment: ""
+  timeout: 2800
+  partition: learnlab
+  address: localhost
+  port: 58492

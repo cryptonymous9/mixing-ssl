@@ -1,3 +1,0 @@
-- +pretrain=barlow
-- pretrain.validation.resolution=10
-- ++train_dataset=my_train_data.dat
