@@ -1,10 +1,18 @@
 dino:
-  # Add DINO-specific parameters here
+  out_dim: 65536  # Dimensionality of DINO head
+  local_crops_n: 8
+  global_crops_n: 2
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.04
+  warmup_teacher_temp_epochs: 5
+  student_temp: 0.1
+  center_momentum: 0.9
 
-# Common configurations
 model:
   name: dino
   arch: vit_base
+  patch_size: 16
+  drop_path_rate: 0.1
   remove_head: 0
   mlp: "2048-512"
   mlp_coeff: 1.0
@@ -33,9 +41,22 @@ training:
 
 validation:
   batch_size: 25
-  resolution: 224  
+  resolution: 224
 
 logging:
-  folder: ""  # Required, specify log folder
+  wandb: True
+  wandb_project: "mixing-ssl"
+  folder: "logs/test1/"  # Required, specify log folder
   log_level: 2
   checkpoint_freq: 20
+
+distributed:
+  use_submitit: 0
+  world_size: 1
+  ngpus: 4
+  nodes: 1
+  comment: ""
+  timeout: 2800
+  partition: learnlab
+  address: localhost
+  port: 58492

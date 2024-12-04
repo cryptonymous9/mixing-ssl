@@ -17,6 +17,7 @@ from tqdm import tqdm
 import submitit
 from uuid import uuid4
 from pathlib import Path
+import wandb
 
 # import ffcv
 # from ffcv.loader import Loader, OrderOption
@@ -30,9 +31,9 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from modules.net import SSLNetwork
-from modules.utils import LARS, cosine_scheduler, learning_schedule
-from modules.losses import SimCLRLoss,  BarlowTwinsLoss, ByolLoss, MixupLoss
-from modules.datasets import create_val_loader, create_train_loader_ssl, create_train_loader_supervised
+from modules.utils import LARS, cosine_scheduler, learning_schedule, print_cfg
+from modules.losses import SimCLRLoss,  BarlowTwinsLoss, ByolLoss
+from modules.datasets import create_val_loader, create_train_loader_ssl, create_train_loader_supervised, create_train_loader_ssl_mixdiff
 
 ################################
 ##### Some Miscs functions #####
@@ -55,7 +56,12 @@ def get_init_file():
         os.remove(str(init_file))
     return init_file
 
-
+def init_wandb(project_name, config=None):
+    wandb.require("core")
+    wandb.login()
+    cfg_dict = OmegaConf.to_container(config, resolve=True)
+    wandb.init(project=project_name, config=cfg_dict)
+    print(f"Wandb initialized with project: {project_name}")
 
 class LinearsProbes(nn.Module):
     def __init__(self, cfg, model, num_classes, mlp_coeff):
@@ -87,7 +93,7 @@ class ImageNetTrainer:
         loss = cfg.pretrain.training.loss
         train_probes_only = cfg.pretrain.training.train_probes_only
         epochs = cfg.pretrain.training.epochs
-        mixup = cfg.pretrain.training.mixup
+        # mixup = cfg.pretrain.training.mixup
         train_dataset = cfg.data.train_dataset
         val_dataset = cfg.data.val_dataset
 
@@ -108,7 +114,7 @@ class ImageNetTrainer:
         self.index_labels = 1
         self.train_loader = self.get_dataloader(cfg)
         self.num_train_exemples = self.train_loader.indices.shape[0]
-        self.num_classes = 100
+        self.num_classes = cfg.data.num_classes
         self.val_loader = create_val_loader(cfg, self.gpu, val_dataset)
         print("NUM TRAINING EXEMPLES:", self.num_train_exemples)
         
@@ -137,8 +143,8 @@ class ImageNetTrainer:
         self.teacher_student = False
         self.supervised_loss = False
         self.loss_name = loss
-        if mixup:
-            self.mixup_loss = MixupLoss(batch_size, world_size, self.gpu)
+        # if mixup:
+        #     self.mixup_loss = MixupLoss(batch_size, world_size, self.gpu)
         
         if loss == "simclr":
             self.ssl_loss = SimCLRLoss(cfg, batch_size, world_size, self.gpu).to(self.gpu)
@@ -185,7 +191,7 @@ class ImageNetTrainer:
 
         # print("Train", train_dataset)
         if use_ssl:
-            return create_train_loader_ssl(cfg, self.gpu, train_dataset) #, _
+            return create_train_loader_ssl_mixdiff(cfg, self.gpu, train_dataset) #, _
         else:
             return create_train_loader_supervised(cfg, self.gpu, train_dataset) #, None
 
@@ -318,7 +324,7 @@ class ImageNetTrainer:
         log_level = cfg.pretrain.logging.log_level
         base_lr = cfg.pretrain.training.base_lr
         end_lr_ratio = cfg.pretrain.training.end_lr_ratio
-        mixup = cfg.pretrain.training.mixup
+        # mixup = cfg.pretrain.training.mixup
 
         model = self.model
         model.train()
@@ -346,10 +352,10 @@ class ImageNetTrainer:
             images_big_1 = loaders[1]
             images_big = ch.cat((images_big_0, images_big_1), dim=0)
 
-            if mixup:
-                mixup_alpha = 1 
-                lam = ch.FloatTensor([np.random.beta(mixup_alpha, mixup_alpha)]).cuda()
-                images_mixup = lam*images_big_0 + (1-lam)*images_big_1
+            # if mixup:
+            #     mixup_alpha = 1 
+            #     lam = ch.FloatTensor([np.random.beta(mixup_alpha, mixup_alpha)]).cuda()
+            #     images_mixup = lam*images_big_0 + (1-lam)*images_big_1
             # SSL Training
             if self.do_ssl_training:
                 self.optimizer.zero_grad(set_to_none=True)
@@ -364,8 +370,8 @@ class ImageNetTrainer:
                     else:
                         # Compute embedding in bigger crops
                         embedding_big, _ = model(images_big)
-                        if mixup:
-                            embedding_mixup, _  = model(images_mixup)
+                        # if mixup:
+                        #     embedding_mixup, _  = model(images_mixup)
                         
                     # Compute SSL Loss
                     if self.teacher_student: 
@@ -381,11 +387,11 @@ class ImageNetTrainer:
                             loss_train = loss_num + loss_denum
                         else:
                             loss_train = self.ssl_loss(embedding_big[0], embedding_big[1])
-                        if mixup:
-                            mloss = self.mixup_loss(embedding_big[0], embedding_big[1], embedding_mixup, lam)
+                        # if mixup:
+                        #     mloss = self.mixup_loss(embedding_big[0], embedding_big[1], embedding_mixup, lam)
                             # print(loss_train) if self.gpu==0 else None
                             # print(mloss) if self.gpu==0 else None
-                            loss_train+=0.3*mloss
+                            # loss_train+=0.3*mloss
                     self.scaler.scale(loss_train).backward()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
@@ -401,10 +407,10 @@ class ImageNetTrainer:
             self.optimizer_probes.zero_grad(set_to_none=True)
             # Compute embeddings vectors
             with ch.no_grad():
-                with autocast():
+                with ch.amp.autocast(self.device):
                     _, list_representation = model(images_big_0)
             # Train probes
-            with autocast():
+            with ch.amp.autocast(self.device):
                 # Real value classification
                 list_outputs = self.probes(list_representation)
                 loss_classif = 0.
@@ -451,7 +457,7 @@ class ImageNetTrainer:
         model = self.model
         model.eval()
         with ch.no_grad():
-            with autocast():
+            with ch.amp.autocast(self.device): 
                 for images, target in tqdm(self.val_loader):
                     _, list_representation = model(images)
                     list_outputs = self.probes(list_representation)
@@ -501,16 +507,17 @@ class ImageNetTrainer:
             self.start_time = time.time()
 
             print(f'=> Logging in {self.log_folder}')
-            params = {
-                '.'.join(k): self.all_params[k] for k in self.all_params.entries.keys()
-            }
-
-            with open(folder / 'params.json', 'w+') as handle:
-                json.dump(params, handle)
+            cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+            os.makedirs(folder, exist_ok=True)
+            with open(folder / 'params.json', 'w+') as json_file:
+                json.dump(cfg_dict, json_file, indent=4)
         self.log_folder = Path(folder)
 
-    def log(self, content, train_probes_only):
+
+    def log(self, content):
         train_probes_only = self.cfg.pretrain.training.train_probes_only
+        use_wandb = self.cfg.pretrain.logging.wandb
+        
         print(f'=> Log: {content}')
         if self.rank != 0: return
         cur_time = time.time()
@@ -522,12 +529,15 @@ class ImageNetTrainer:
                 **content
             }) + '\n')
             fd.flush()
+        if use_wandb:
+            wandb.log(content)
 
     @classmethod
     def launch_from_args(cls, cfg):
         distributed = cfg.pretrain.training.distributed
-        port = cfg.distributed.port
-        world_size = cfg.distributed.world_size
+        port = str(cfg.pretrain.distributed.port)
+        world_size = cfg.pretrain.distributed.world_size
+
         if distributed:
             ngpus_per_node = ch.cuda.device_count()
             world_size = int(os.getenv("SLURM_NNODES", "1")) * ngpus_per_node
@@ -537,12 +547,9 @@ class ImageNetTrainer:
                 dist_url = f"tcp://{host_name}:"+port
             else:
                 dist_url = "tcp://localhost:"+port
-            ch.multiprocessing.spawn(cls._exec_wrapper, nprocs=ngpus_per_node, join=True, args=(None, cfg, ngpus_per_node, world_size, dist_url))
-            # ch.multiprocessing.spawn(cls._exec_wrapper, nprocs=ngpus_per_node, join=True)
-
+            ch.multiprocessing.spawn(cls._exec_wrapper, nprocs=ngpus_per_node, join=True, args=( cfg, ngpus_per_node, world_size, dist_url))
         else:
-            dist_url = None
-            cls.exec(0, cfg, dist_url)
+            cls.exec(0, cfg)
 
     @classmethod
     def _exec_wrapper(cls, *args, **kwargs):
@@ -552,14 +559,17 @@ class ImageNetTrainer:
         cls.exec(*args, **kwargs)
 
     @classmethod
-    def exec(cls, gpu, cfg, dist_url):
-        ngpus_per_node = ch.cuda.device_count()
+    def exec(cls, gpu, cfg, ngpus_per_node=1, world_size=1, dist_url=None):
+        
+        # ngpus_per_node = ch.cuda.device_count()
+        # distributed = cfg.pretrain.training.distributed
+        # world_size = cfg.distributed.world_size
+        # dist_url = None
+        # eval_only = cfg.pretrain.training.eval_only
+
         distributed = cfg.pretrain.training.distributed
-        world_size = cfg.distributed.world_size
-        dist_url = None
         eval_only = cfg.pretrain.training.eval_only
-
-
+        
 
         trainer = cls(cfg=cfg, gpu=gpu, ngpus_per_node=ngpus_per_node, world_size=world_size, dist_url=dist_url)
         if eval_only:
@@ -600,7 +610,7 @@ class Trainer(object):
         else:
             dist_url = "tcp://localhost:"+self.port
         print(f"Process group: {job_env.num_tasks} tasks, rank: {job_env.global_rank}")
-        ImageNetTrainer._exec_wrapper(gpu, self.cfg, self.num_gpus_per_node, world_size, dist_url)
+        ImageNetTrainer._exec_wrapper(gpu, self.config, self.num_gpus_per_node, world_size, dist_url)
 
 # Running
 # def make_config(quiet=False):
@@ -614,15 +624,14 @@ class Trainer(object):
 #         config.summary()
 #     return config
 
-
 def run_submitit(cfg):
     folder = cfg.pretrain.logging.folder
-    ngpus = cfg.distributed.ngpus
-    nodes = cfg.distributed.nodes
-    timeout = cfg.distributed.timeout
-    partition = cfg.distributed.partition
-    comment = cfg.distributed.comment
-    port = cfg.distributed.port
+    ngpus = cfg.pretrain.distributed.ngpus
+    nodes = cfg.pretrain.distributed.nodes
+    timeout = cfg.pretrain.distributed.timeout
+    partition = cfg.pretrain.distributed.partition
+    comment = cfg.pretrain.distributed.comment
+    port = cfg.pretrain.distributed.port
     
     Path(folder).mkdir(parents=True, exist_ok=True)
     executor = submitit.AutoExecutor(folder=folder, slurm_max_num_timeout=30)
@@ -658,8 +667,11 @@ def run_submitit(cfg):
 
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg: DictConfig):
-    print(OmegaConf.to_yaml(cfg))
-    use_submitit = cfg.distributed.use_submitit
+    # print(OmegaConf.to_yaml(cfg))
+    print_cfg(cfg)
+
+    use_submitit = cfg.pretrain.distributed.use_submitit
+    # use_submitit = cfg.distributed.use_submitit
     if use_submitit:
         run_submitit(cfg)
     else:

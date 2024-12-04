@@ -42,11 +42,11 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-from modules.net import SSLNetwork
-from modules.utils import LARS, cosine_scheduler, learning_schedule
-from modules.losses import SimCLRLoss,  BarlowTwinsLoss, ByolLoss, MixupLoss
+from modules.net import SSLNetwork, LinearsProbes
+from modules.utils import LARS, cosine_scheduler, learning_schedule, print_cfg
+from modules.losses import SimCLRLoss,  BarlowTwinsLoss, ByolLoss
 from modules.datasets import create_val_loader, create_train_loader_ssl, create_train_loader_supervised
-
+import wandb
 
 ################################
 ##### Some Miscs functions #####
@@ -69,23 +69,6 @@ def get_init_file():
         os.remove(str(init_file))
     return init_file
 
-
-
-class LinearsProbes(nn.Module):
-    def __init__(self, cfg, model, num_classes):
-        super().__init__()
-        mlp_coeff = cfg.pretrain.model.mlp_coeff
-        print("NUM CLASSES", num_classes)
-        mlp_spec = f"{model.representation_size}-{model.mlp}"
-        f = list(map(int, mlp_spec.split("-")))
-        f[-2] = int(f[-2] * mlp_coeff)
-        self.probes = []
-        for num_features in f:
-            self.probes.append(nn.Linear(num_features, num_classes))
-        self.probes = nn.Sequential(*self.probes)
-
-    def forward(self, list_outputs, binary=False):
-        return [self.probes[i](list_outputs[i]) for i in range(len(list_outputs))]
 
 
 ################################
@@ -124,9 +107,9 @@ class ImageNetTrainer:
         # Create DataLoader
         self.train_dataset = train_dataset
         self.index_labels = 1
-        self.train_loader, self.decoder, self.decoder2 = create_train_loader_ssl(cfg, self.gpu, train_dataset)
+        self.train_loader, self.decoder, self.decoder2 = self.get_dataloader(cfg)
         self.num_train_exemples = self.train_loader.indices.shape[0]
-        self.num_classes = 1000
+        self.num_classes = cfg.data.num_classes
         self.val_loader = create_val_loader(cfg, self.gpu, val_dataset)
         print("NUM TRAINING EXEMPLES:", self.num_train_exemples)
         
@@ -155,8 +138,10 @@ class ImageNetTrainer:
         if cfg.pretrain.training.distributed:
             self.probes = ch.nn.parallel.DistributedDataParallel(self.probes, device_ids=[self.gpu])
         self.optimizer_probes = ch.optim.AdamW(self.probes.parameters(), lr=1e-4)
+       
         # Load models if checkpoints
         self.load_checkpoint(cfg)
+       
         # Define SSL loss
         self.do_ssl_training = False if train_probes_only else True
         self.teacher_student = False
@@ -165,7 +150,7 @@ class ImageNetTrainer:
         if loss == "simclr":
             self.ssl_loss = SimCLRLoss(cfg, batch_size, world_size, self.gpu).to(self.gpu)
         elif loss == "barlow":
-            self.ssl_loss = BarlowTwinsLoss(cfg, self.model_module.bn, batch_size, world_size)
+            self.ssl_loss = BarlowTwinsLoss(cfg, self.model_module.bn, batch_size, world_size).to(self.gpu)
         elif loss == "byol":
             self.ssl_loss = ByolLoss(cfg)
             self.teacher_student = True
@@ -179,8 +164,6 @@ class ImageNetTrainer:
         else:
             print("Loss not available")
             exit(1)
-
-    # resolution tools
 
     def get_resolution(self, cfg, epoch): 
         min_res = cfg.data.resolution.min_res
@@ -207,10 +190,10 @@ class ImageNetTrainer:
         train_dataset = cfg.data.train_dataset
         if use_ssl:
             train_loader, self.decoder, self.decoder2 = create_train_loader_ssl(cfg, self.gpu, train_dataset)
-            return train_loader, self.create_val_loader()
+            return train_loader, self.decoder, self.decoder2
         else:
             train_loader, self.decoder, self.decoder2 = create_train_loader_supervised(cfg, self.gpu, train_dataset)
-            return train_loader, self.create_val_loader()
+            return train_loader, self.decoder, self.decoder2
 
     def setup_distributed(self):
         dist.init_process_group("nccl", init_method=self.dist_url, rank=self.rank, world_size=self.world_size)
@@ -362,10 +345,8 @@ class ImageNetTrainer:
                  g["lr"] = lr
 
             # Get data
-            images_big_0 = loaders[0]
-            labels_big = loaders[1]
+            images_big_0, labels_big, images_big_1 = loaders[0], loaders[1], loaders[2]
             batch_size = loaders[1].size(0)
-            images_big_1 = loaders[2]
             images_big = ch.cat((images_big_0, images_big_1), dim=0)
 
             # SSL Training
@@ -382,7 +363,6 @@ class ImageNetTrainer:
                     else:
                         # Compute embedding in bigger crops
                         embedding_big, _ = model(images_big)
-                    
                     # Compute SSL Loss
                     if self.teacher_student:
                         embedding_big = embedding_big.view(2, batch_size, -1)
@@ -405,16 +385,16 @@ class ImageNetTrainer:
                 loss_train = ch.tensor(0.)
             if self.teacher_student:
                 m = self.momentum_schedule[ix]  # momentum parameter
-                for param_q, param_k in zip(model_module.parameters(), self.teacher.module.parameters()):
+                for param_q, param_k in zip(self.model_module.parameters(), self.teacher.module.parameters()):
                     param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
             # Online linear probes training
             self.optimizer.zero_grad(set_to_none=True)
             self.optimizer_probes.zero_grad(set_to_none=True)
             # Compute embeddings vectors
-            with ch.no_grad():
-                with ch.amp.autocast(self.device):
-                    _, list_representation = model(images_big_0)
+            with ch.amp.autocast(self.device):
+                with ch.no_grad():
+                        _, list_representation = model(images_big_0)
             # Train probes
             with ch.amp.autocast(self.device):
                 # Real value classification
@@ -513,17 +493,11 @@ class ImageNetTrainer:
             os.makedirs(folder, exist_ok=True)
             with open(folder / 'params.json', 'w+') as json_file:
                 json.dump(cfg_dict, json_file, indent=4)
-            # os.makedirs(self.log_folder, exist_ok=True)
-            # params = {
-            #     '.'.join(k): self.all_params[k] for k in self.all_params.entries.keys()
-            # }
-
-            # with open(folder / 'params.json', 'w+') as handle:
-            #     json.dump(params, handle)
         self.log_folder = Path(folder)
 
     def log(self, content):
         train_probes_only = self.cfg.pretrain.training.train_probes_only
+        use_wandb = self.cfg.pretrain.logging.wandb
         print(f'=> Log: {content}')
         if self.rank != 0: return
         cur_time = time.time()
@@ -535,12 +509,14 @@ class ImageNetTrainer:
                 **content
             }) + '\n')
             fd.flush()
+        if use_wandb:
+            wandb.log(content)
 
     @classmethod
     def launch_from_args(cls, cfg):
         distributed = cfg.pretrain.training.distributed
-        port = str(cfg.distributed.port)
-        world_size = cfg.distributed.world_size
+        port = str(cfg.pretrain.distributed.port)
+        world_size = cfg.pretrain.distributed.world_size
         if distributed:
             ngpus_per_node = ch.cuda.device_count()
             world_size = int(os.getenv("SLURM_NNODES", "1")) * ngpus_per_node
@@ -606,29 +582,18 @@ class Trainer(object):
         else:
             dist_url = "tcp://localhost:"+self.port
         print(f"Process group: {job_env.num_tasks} tasks, rank: {job_env.global_rank}")
-        ImageNetTrainer._exec_wrapper(gpu, config, self.num_gpus_per_node, world_size, dist_url)
+        ImageNetTrainer._exec_wrapper(gpu, self.config, self.num_gpus_per_node, world_size, dist_url)
 
-# Running
-def make_config(quiet=False):
-    config = get_current_config()
-    parser = ArgumentParser(description='Fast SSL training')
-    parser.add_argument("folder", type=str)
-    config.augment_argparse(parser)
-    config.collect_argparse_args(parser)
-    config.validate(mode='stderr')
-    if not quiet:
-        config.summary()
-    return config
 
 
 def run_submitit(cfg):
     folder = cfg.pretrain.logging.folder
-    ngpus = cfg.distributed.ngpus
-    nodes = cfg.distributed.nodes
-    timeout = cfg.distributed.timeout
-    partition = cfg.distributed.partition
-    comment = cfg.distributed.comment
-    port = cfg.distributed.port
+    ngpus = cfg.pretrain.distributed.ngpus
+    nodes = cfg.pretrain.distributed.nodes
+    timeout = cfg.pretrain.distributed.timeout
+    partition = cfg.pretrain.distributed.partition
+    comment = cfg.pretrain.distributed.comment
+    port = cfg.pretrain.distributed.port
 
     Path(folder).mkdir(parents=True, exist_ok=True)
     executor = submitit.AutoExecutor(folder=folder, slurm_max_num_timeout=30)
@@ -662,35 +627,21 @@ def run_submitit(cfg):
     print(f"Submitted job_id: {job.job_id}")
     print(f"Logs and checkpoints will be saved at: {folder}")
 
-def flatten_dict(d, parent_key='', sep='.'):
-    """Recursively flatten a nested dictionary."""
-    items = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
 
-def print_cfg(cfg):
-    from prettytable import PrettyTable
-
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    flat_cfg = flatten_dict(cfg_dict)
-    table = PrettyTable()
-    table.field_names = ["Key", "Value"]
-
-    for key, value in flat_cfg.items():
-        table.add_row([key, value])
-
-    print(table)
+def init_wandb(project_name, config=None):
+    wandb.require("core")
+    wandb.login()
+    cfg_dict = OmegaConf.to_container(config, resolve=True)
+    wandb.init(project=project_name, config=cfg_dict)
+    print(f"Wandb initialized with project: {project_name}")
 
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg: DictConfig):
-    # print(OmegaConf.to_yaml(cfg))
     print_cfg(cfg)
-    use_submitit = cfg.distributed.use_submitit
+    use_submitit = cfg.pretrain.distributed.use_submitit
+    if cfg.pretrain.logging.wandb:
+        init_wandb(cfg.pretrain.logging.wandb_project, cfg)
+    
     if use_submitit:
         run_submitit(cfg)
     else:

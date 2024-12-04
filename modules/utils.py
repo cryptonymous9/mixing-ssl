@@ -32,6 +32,8 @@ import torch
 from torch import nn
 import torch.distributed as dist
 from PIL import ImageFilter, ImageOps
+from omegaconf import DictConfig, OmegaConf
+import wandb
 
 
 class GaussianBlur(object):
@@ -849,3 +851,36 @@ def learning_schedule(
         return cosine_decay(
             global_step - warmup_steps, total_steps - warmup_steps, scaled_lr, end_lr
         )
+    
+def flatten_dict(d, parent_key='', sep='.'):
+    """Recursively flatten a nested dictionary."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def print_cfg(cfg):
+    from prettytable import PrettyTable
+
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    flat_cfg = flatten_dict(cfg_dict)
+    table = PrettyTable()
+    table.field_names = ["Key", "Value"]
+
+    for key, value in flat_cfg.items():
+        table.add_row([key, value])
+
+    print(table)
+
+
+def has_batchnorms(model):
+    bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm)
+    for name, module in model.named_modules():
+        if isinstance(module, bn_types):
+            return True
+    return False

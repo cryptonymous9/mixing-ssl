@@ -36,6 +36,19 @@ validation:
   resolution: 224  
 
 logging:
+  wandb: True
+  wandb_project: "mixing-ssl"
   folder: ""  # Required, specify log folder
   log_level: 2
   checkpoint_freq: 20
+
+distributed:
+  use_submitit: 0
+  world_size: 1
+  ngpus: 4
+  nodes: 1
+  comment: ""
+  timeout: 2800
+  partition: learnlab
+  address: localhost
+  port: 58492

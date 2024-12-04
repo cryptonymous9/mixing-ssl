@@ -62,8 +62,7 @@ def create_val_loader(cfg, gpu, val_dataset):
     return loader
 
 
-
-def create_train_loader_ssl_diffmix(cfg, gpu, train_dataset):
+def create_train_loader_ssl_mixdiff(cfg, gpu, train_dataset):
     batch_size = cfg.pretrain.training.batch_size
     distributed = cfg.pretrain.training.distributed
     
@@ -122,7 +121,7 @@ def create_train_loader_ssl_diffmix(cfg, gpu, train_dataset):
         'label': label_pipeline,
     }
 
-    order = OrderOption.RANDOM if distributed else OrderOption.QUASI_RANDOM
+    order = OrderOption.RANDOM 
     #custom_field_mapper={"image_0": "image"}
 
     # Create data loader
@@ -133,7 +132,7 @@ def create_train_loader_ssl_diffmix(cfg, gpu, train_dataset):
                     os_cache=in_memory,
                     drop_last=True,
                     pipelines=pipelines,
-                    distributed=distributed,)
+                    distributed=bool(distributed))
                     #custom_field_mapper=custom_field_mapper)
 
 
@@ -185,7 +184,7 @@ def create_train_loader_supervised(self, cfg, train_dataset):
         'label': label_pipeline,
     }
 
-    order = OrderOption.RANDOM if distributed else OrderOption.QUASI_RANDOM
+    order = OrderOption.RANDOM
     #custom_field_mapper={"image_0": "image"}
 
     # Create data loader
@@ -198,7 +197,6 @@ def create_train_loader_supervised(self, cfg, train_dataset):
                     pipelines=pipelines,
                     distributed=distributed,)
                     #custom_field_mapper=custom_field_mapper)
-
 
     return loader, decoder, decoder2
 
@@ -258,6 +256,7 @@ def create_train_loader_ssl(cfg, gpu, train_dataset):
     custom_field_mapper={"image_0": "image"}
 
     # Create data loader
+
     loader = ffcv.Loader(train_dataset,
                     batch_size=batch_size,
                     num_workers=num_workers,
@@ -267,8 +266,5 @@ def create_train_loader_ssl(cfg, gpu, train_dataset):
                     pipelines=pipelines,
                     distributed=distributed,
                     custom_field_mapper=custom_field_mapper)
-
+    
     return loader, decoder, decoder2
-
-
-
