@@ -8,7 +8,7 @@
 
 
 <div align="center">
-<img src="http://drive.google.com/uc?export=view&id=1WODFQ4ODPxfP1cZXMa4YdcRo84R8edAS" width="400">
+<img src="http://drive.google.com/uc?export=view&id=1WODFQ4ODPxfP1cZXMa4YdcRo84R8edAS" width="600">
 </br>
 <em>Comparison of SimCLR performance on real, synthetic (Syn), and mixed real and synthetic images (MixDiff). The radar charts show normalized accuracy across 8 transfer learning datasets (left) and ImageNet-1K plus 6 distribution shift datasets (right), with values from 0.5 to 1.1. MixDiff enhances in-distribution and robustness performance and generalizes better.</em>
 </div>
