@@ -64,11 +64,11 @@ def init_wandb(project_name, config=None):
     print(f"Wandb initialized with project: {project_name}")
 
 class LinearsProbes(nn.Module):
-    def __init__(self, cfg, model, num_classes, mlp_coeff):
+    def __init__(self, cfg, model, num_classes):
         super().__init__()
         mlp_coeff = cfg.pretrain.model.mlp_coeff
         print("NUM CLASSES", num_classes)
-        mlp_spec = f"{model.module.representation_size}-{model.module.mlp}"
+        mlp_spec = f"{model.representation_size}-{model.mlp}"
         f = list(map(int, mlp_spec.split("-")))
         f[-2] = int(f[-2] * mlp_coeff)
         self.probes = []
@@ -120,8 +120,14 @@ class ImageNetTrainer:
         
         # Create SSL model
         self.model, self.scaler = self.create_model_and_scaler(cfg)
-        self.num_features = self.model.module.num_features
-        self.n_layers_proj = len(self.model.module.projector) + 1
+        if distributed:
+            self.model_module = self.model_module
+        else:
+            self.model_module = self.model
+
+        self.num_features = self.model_module.num_features
+        self.n_layers_proj = len(self.model_module.projector) + 1
+
         print("N layers in proj:", self.n_layers_proj)
         self.initialize_logger(cfg)
         self.classif_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
@@ -132,7 +138,9 @@ class ImageNetTrainer:
         self.probes = LinearsProbes(cfg, self.model, num_classes=self.num_classes)
         self.probes = self.probes.to(memory_format=ch.channels_last)
         self.probes = self.probes.to(self.gpu)
-        self.probes = ch.nn.parallel.DistributedDataParallel(self.probes, device_ids=[self.gpu])
+        
+        if cfg.pretrain.training.distributed:
+            self.probes = ch.nn.parallel.DistributedDataParallel(self.probes, device_ids=[self.gpu])
         self.optimizer_probes = ch.optim.AdamW(self.probes.parameters(), lr=1e-4)
         
         # Load models if checkpoints
@@ -234,7 +242,8 @@ class ImageNetTrainer:
 
     def train(self, cfg):
         epochs = cfg.pretrain.training.epochs
-        log_level = cfg.logging.log_level
+        log_level = cfg.pretrain.logging.log_level
+
         # We scale the number of max steps w.t the number of examples in the training set
         self.max_steps = epochs * self.num_train_exemples // (self.batch_size * self.world_size)
         for epoch in range(self.start_epoch, epochs):
@@ -265,14 +274,15 @@ class ImageNetTrainer:
         loss = cfg.pretrain.training.loss
 
         scaler = ch.amp.GradScaler(ch.cuda.current_device())
-        model = SSLNetwork()
+        model = SSLNetwork(cfg)
         if loss == "supervised":
             model.fc = nn.Linear(model.num_features, self.num_classes)
         model = model.to(memory_format=ch.channels_last)
         model = model.to(self.gpu)
 
-        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = ch.nn.parallel.DistributedDataParallel(model, device_ids=[self.gpu])
+        if cfg.pretrain.training.distributed:
+            model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            model = ch.nn.parallel.DistributedDataParallel(model, device_ids=[self.gpu])
         return model, scaler
 
 

@@ -24,7 +24,6 @@ target/
 profile_default/
 ipython_config.py
 
-
 # Celery stuff
 celerybeat-schedule
 celerybeat.pid
@@ -41,3 +40,5 @@ ENV/
 env.bak/
 venv.bak/
 
+# FFCV
+ffcv_ssl.egg-info/
