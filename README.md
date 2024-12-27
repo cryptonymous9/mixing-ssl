@@ -4,6 +4,8 @@
 
 [PyTorch] Code for the paper - MixDiff: Mixing Natural and Synthetic Images for Robust Self-Supervised Representations, WACV, 2025.
 
+[[Link to the Paper (arxiv)]](https://arxiv.org/pdf/2406.12368)
+
 `MixDiff` is a self-supervised learning (SSL) pre-training framework that leverages both real and synthetic images to enhance representation learning. Unlike traditional SSL methods that rely heavily on real images, MixDiff introduces a novel approach by incorporating a variant of Stable Diffusion to replace an augmented instance of a real image. This enables the model to learn cross real-synthetic representations effectively. Our experiments confirm that MixDiff not only improves performance but also reduces the dependency on large amounts of real data, making it an efficient and versatile framework for SSL.
 
 
